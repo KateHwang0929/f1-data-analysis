@@ -1,0 +1,164 @@
+---
+title: "IS 445 Final Project – Data Visualizations"
+author: "Kate Hwang"
+date: "2026-01-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(ggrepel)
+library(viridis)
+
+dir.create("figures", showWarnings = FALSE)
+```
+
+```{r data}
+f1 <- read_csv("Formula1_2025Season_RaceResults.csv", show_col_types = FALSE)
+
+track_levels <- unique(f1$Track)
+
+f1c <- f1 %>%
+  mutate(
+    round = match(Track, track_levels),
+    finish_position = suppressWarnings(as.integer(Position)), 
+    grid_position = `Starting Grid`,
+    points = Points
+  )
+```
+
+# Figure 1: Top Drivers by Total Points
+```{r fig1}
+driver_pts <- f1c %>%
+  group_by(Driver) %>%
+  summarise(total_points = sum(points, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_points)) %>%
+  slice_head(n = 10) %>%
+  mutate(Driver = fct_reorder(Driver, total_points))
+
+p1 <- ggplot(driver_pts, aes(x = Driver, y = total_points)) +
+  geom_col() +
+  geom_text(aes(label = total_points), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  labs(
+    title = "Figure 1. Top 10 Drivers by Total Championship Points (F1 2025)",
+    x = "Driver (name)",
+    y = "Total Championship Points (pts)"
+  ) +
+  expand_limits(y = max(driver_pts$total_points) * 1.08) +
+  theme_minimal()
+
+print(p1)
+
+```
+
+
+Audience: F1 fans and analysts who want an instant view of who is leading the championship. 
+
+Data Story Message: This chart shows which drivers accumulated the most points across the season, emphasizing overall performance rather than single-race outcomes. 
+
+# Figure 2: Consistency vs Points
+```{r fig2}
+top10 <- f1c %>%
+  group_by(Driver) %>%
+  summarise(total_points = sum(points, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_points)) %>%
+  slice_head(n = 10)
+
+heat_df <- f1c %>%
+  semi_join(top10, by = "Driver") %>%
+  group_by(Driver, round) %>%
+  summarise(
+    finish_position_round = if (all(is.na(finish_position))) NA_integer_
+    else min(finish_position, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(top10, by = "Driver") %>%
+  mutate(Driver = factor(Driver, levels = top10$Driver))  
+
+p2 <- ggplot(heat_df, aes(x = round, y = Driver, fill = finish_position_round)) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  scale_fill_viridis_c(
+    direction = -1, 
+    na.value = "grey90",
+    name = "Finish position\n(place)"
+  ) +
+  labs(
+    title = "Figure 2. Season Consistency: Finishing Position by Round (Top 10 Drivers, F1 2025)",
+    subtitle = "Stronger color = better finish (lower place). Grey = no classified finish / missing.",
+    x = "Round (season order)",
+    y = "Driver"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+print(p2)
+```
+
+
+Audience: This figure is for F1 fans and analysts who want to understand why some drivers score more points over a season. To be more specific, they would want to know how consistent finishing results (driver's consistency) contribute to championship success.
+
+Data story Message: Figure 2 visualizes season-long consistency by showing each top driver’s finishing position across rounds. Drivers with consistently strong results such as Max Verstappen and Lando Norris appearto have better finishes across the season, while inconsistent drivers show a mix of strong and weak finishes. Because non-classified finishes (usually did not finish or disqualified) are shown separately (grey), the visualization also highlights how reliability and race completion affect overall season performance.
+
+# Cumulative Championship Points by Round (Top 5 Drivers)
+```{r}
+top5 <- f1c %>%
+  group_by(Driver) %>%
+  summarise(total_points = sum(points, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_points)) %>%
+  slice_head(n = 5) %>%
+  pull(Driver)
+
+cum <- f1c %>%
+  filter(Driver %in% top5) %>%
+  group_by(Driver, round) %>%
+  summarise(points_round = sum(points, na.rm = TRUE), .groups = "drop") %>%
+  arrange(Driver, round) %>%
+  group_by(Driver) %>%
+  mutate(cum_points = cumsum(points_round)) %>%
+  ungroup()
+
+end_labels <- cum %>%
+  group_by(Driver) %>%
+  slice_max(round, n = 1, with_ties = FALSE) %>%
+  ungroup()
+```
+
+```{r fig3}
+p3 <- ggplot(cum, aes(x = round, y = cum_points, color = Driver)) +
+  geom_line(linewidth = 1.1) +
+
+  ggrepel::geom_text_repel(
+    data = end_labels,
+    aes(x = round, y = cum_points, label = Driver),
+    nudge_x = 8,           
+    direction = "y", 
+    hjust = 0,
+    size = 4.5,
+    min.segment.length = 0, 
+    segment.color = "grey70",
+    show.legend = FALSE
+  ) +
+
+  labs(
+    title = "Figure 3. Cumulative Championship Points by Round (Top 5 Drivers, F1 2025)",
+    x = "Round (season order)",
+    y = "Cumulative Championship Points (pts)"
+  ) +
+  coord_cartesian(xlim = c(1, 30), clip = "off") +
+
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(5.5, 50, 5.5, 5.5) 
+  )
+
+print(p3)
+```
+
+
+Audience: This visualization is intended for Formula 1 fans and motorsports analysts who want to understand how the championship battle evolved over the season, not just the final standings. It is especially useful for readers who follow momentum shifts (such as late-season catch up or consistent point accumulation) across top drivers. 
+
+Data story Message: Figure 3 trakcs cumulative championship points by round for the top drivers, where the slope of each curve represents the pace of point accumulation. A steeper slope indicates a period of stronger scoring, while a flatter slope suggests lower points in those rounds. In this chart, Max Verstappen’s curve shows a sharp rise after the mid-season portion, creating curving upward pattern. In contrast, Oscar Piastri's line increases more steadily but with visible slowdowns, producing a pttern that resembles early growth followed by flattening behavior. Meanwhile, Lando Norris maintains a consistently strong climb, and drivers like George Russell and Charles Leclerc show comparatively steadier but lower trajectories overall. These different curve shapes make the season narrative visible. Overall, some drivers build points reliably every round, while others rely on late surges or experience stretches where momentum slows.
